@@ -14,6 +14,8 @@ A containerized Python application that systematically scrapes golf course data 
 
 ## Quick Start
 
+**For production server setup, see [GETTING_STARTED.md](GETTING_STARTED.md) for detailed step-by-step instructions.**
+
 ### Running with Docker Compose (Recommended)
 
 ```bash
