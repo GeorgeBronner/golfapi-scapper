@@ -51,6 +51,7 @@ class Database:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS scrape_metadata (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
+                    update_start_id INTEGER NOT NULL DEFAULT 0,
                     last_scraped_id INTEGER NOT NULL DEFAULT 0,
                     consecutive_404s INTEGER NOT NULL DEFAULT 0,
                     total_courses_scraped INTEGER NOT NULL DEFAULT 0,
@@ -90,88 +91,28 @@ class Database:
                 ON scrape_attempts(attempted_at)
             ''')
 
-            # Courses table
+            # Courses table with inline location data
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS courses (
                     id INTEGER PRIMARY KEY,
                     club_name TEXT NOT NULL,
                     course_name TEXT NOT NULL,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
-            # Locations table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS locations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    course_id INTEGER NOT NULL UNIQUE,
                     address TEXT,
                     city TEXT,
                     state TEXT,
                     country TEXT,
                     latitude REAL,
                     longitude REAL,
-                    FOREIGN KEY (course_id) REFERENCES courses(id)
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
-
-            # Tees table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tees (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    course_id INTEGER NOT NULL,
-                    gender TEXT NOT NULL CHECK(gender IN ('male', 'female')),
-                    tee_name TEXT NOT NULL,
-                    course_rating REAL,
-                    slope_rating INTEGER,
-                    bogey_rating REAL,
-                    total_yards INTEGER,
-                    total_meters INTEGER,
-                    number_of_holes INTEGER,
-                    par_total INTEGER,
-                    front_course_rating REAL,
-                    front_slope_rating INTEGER,
-                    front_bogey_rating REAL,
-                    back_course_rating REAL,
-                    back_slope_rating INTEGER,
-                    back_bogey_rating REAL,
-                    FOREIGN KEY (course_id) REFERENCES courses(id)
-                )
-            ''')
-
-            # Holes table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS holes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tee_id INTEGER NOT NULL,
-                    hole_number INTEGER NOT NULL CHECK(hole_number BETWEEN 1 AND 18),
-                    par INTEGER,
-                    yardage INTEGER,
-                    handicap INTEGER,
-                    FOREIGN KEY (tee_id) REFERENCES tees(id)
-                )
-            ''')
-
-            # Create indexes
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_locations_course_id
-                ON locations(course_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_tees_course_id
-                ON tees(course_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_holes_tee_id
-                ON holes(tee_id)
             ''')
 
             # Initialize metadata if not exists
             cursor.execute('SELECT COUNT(*) FROM scrape_metadata')
             if cursor.fetchone()[0] == 0:
                 cursor.execute('''
-                    INSERT INTO scrape_metadata (id, last_scraped_id, last_updated)
-                    VALUES (1, 0, ?)
+                    INSERT INTO scrape_metadata (id, update_start_id, last_scraped_id, last_updated)
+                    VALUES (1, 0, 0, ?)
                 ''', (datetime.now(),))
                 logger.info("Initialized scrape_metadata table")
 
@@ -267,80 +208,25 @@ class Database:
             if not course_id:
                 raise ValueError("Course data missing 'id'")
 
-            # Insert course
+            # Get location data
+            location = course.get('location', {})
+
+            # Insert course with inline location data
             cursor.execute('''
-                INSERT OR REPLACE INTO courses (id, club_name, course_name)
-                VALUES (?, ?, ?)
+                INSERT OR REPLACE INTO courses
+                (id, club_name, course_name, address, city, state, country, latitude, longitude)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 course_id,
                 course.get('club_name', ''),
-                course.get('course_name', '')
+                course.get('course_name', ''),
+                location.get('address'),
+                location.get('city'),
+                location.get('state'),
+                location.get('country'),
+                location.get('latitude'),
+                location.get('longitude')
             ))
-
-            # Insert location
-            location = course.get('location', {})
-            if location:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO locations
-                    (course_id, address, city, state, country, latitude, longitude)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    course_id,
-                    location.get('address'),
-                    location.get('city'),
-                    location.get('state'),
-                    location.get('country'),
-                    location.get('latitude'),
-                    location.get('longitude')
-                ))
-
-            # Insert tees and holes
-            tees_data = course.get('tees', {})
-            for gender in ['male', 'female']:
-                tees_list = tees_data.get(gender, [])
-                for tee in tees_list:
-                    cursor.execute('''
-                        INSERT INTO tees (
-                            course_id, gender, tee_name, course_rating, slope_rating,
-                            bogey_rating, total_yards, total_meters, number_of_holes,
-                            par_total, front_course_rating, front_slope_rating,
-                            front_bogey_rating, back_course_rating, back_slope_rating,
-                            back_bogey_rating
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        course_id,
-                        gender,
-                        tee.get('tee_name'),
-                        tee.get('course_rating'),
-                        tee.get('slope_rating'),
-                        tee.get('bogey_rating'),
-                        tee.get('total_yards'),
-                        tee.get('total_meters'),
-                        tee.get('number_of_holes'),
-                        tee.get('par_total'),
-                        tee.get('front_course_rating'),
-                        tee.get('front_slope_rating'),
-                        tee.get('front_bogey_rating'),
-                        tee.get('back_course_rating'),
-                        tee.get('back_slope_rating'),
-                        tee.get('back_bogey_rating')
-                    ))
-
-                    tee_id = cursor.lastrowid
-
-                    # Insert holes for this tee
-                    holes = tee.get('holes', [])
-                    for hole_num, hole in enumerate(holes, start=1):
-                        cursor.execute('''
-                            INSERT INTO holes (tee_id, hole_number, par, yardage, handicap)
-                            VALUES (?, ?, ?, ?, ?)
-                        ''', (
-                            tee_id,
-                            hole_num,
-                            hole.get('par'),
-                            hole.get('yardage'),
-                            hole.get('handicap')
-                        ))
 
             # Update total courses scraped
             cursor.execute('''

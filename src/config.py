@@ -22,7 +22,7 @@ class Config:
 
     # Scraping Configuration
     CONSECUTIVE_404_LIMIT = int(os.getenv('CONSECUTIVE_404_LIMIT', '1000'))  # Stop after this many consecutive 404s
-    REQUEST_DELAY_SECONDS = 1.5  # Delay between requests to be respectful
+    REQUEST_DELAY_SECONDS = 1.0  # Delay between requests to be respectful
 
     # Retry Configuration
     RETRY_DELAY_SECONDS = 300  # 5 minutes
